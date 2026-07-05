@@ -18,8 +18,9 @@ TRADING_DAYS = 252
 
 def build_value_series(portfolio, transactions) -> pd.Series | None:
     """Daily total value (cash + holdings) since the portfolio's first activity."""
+    flows = getattr(portfolio, "cash_flows", []) or []
     start = min(
-        [t.trade_date for t in transactions],
+        [t.trade_date for t in transactions] + [f.flow_date for f in flows],
         default=portfolio.created_at.date(),
     )
     start = min(start, portfolio.created_at.date())
@@ -28,6 +29,8 @@ def build_value_series(portfolio, transactions) -> pd.Series | None:
         idx = pd.DatetimeIndex([pd.Timestamp(date.today())])
 
     cash = pd.Series(float(portfolio.starting_cash), index=idx)
+    for f in flows:
+        cash[cash.index >= pd.Timestamp(f.flow_date)] += f.amount
     total = pd.Series(0.0, index=idx)
 
     symbols = sorted({t.symbol for t in transactions})

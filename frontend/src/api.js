@@ -20,7 +20,9 @@ export const api = {
     request('/portfolios', { method: 'POST', body: JSON.stringify({ name, starting_cash }) }),
   deletePortfolio: (id) => request(`/portfolios/${id}`, { method: 'DELETE' }),
   summary: (id) => request(`/portfolios/${id}/summary`),
-  history: (id) => request(`/portfolios/${id}/history`),
+  history: (id, range = 'max') => request(`/portfolios/${id}/history?range=${range}`),
+  deposit: (id, amount) =>
+    request(`/portfolios/${id}/deposits`, { method: 'POST', body: JSON.stringify({ amount }) }),
   analytics: (id) => request(`/portfolios/${id}/analytics`),
   trade: (id, payload) =>
     request(`/portfolios/${id}/transactions`, { method: 'POST', body: JSON.stringify(payload) }),

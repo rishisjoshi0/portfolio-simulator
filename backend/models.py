@@ -17,6 +17,21 @@ class Portfolio(Base):
     transactions: Mapped[list["Transaction"]] = relationship(
         back_populates="portfolio", cascade="all, delete-orphan"
     )
+    cash_flows: Mapped[list["CashFlow"]] = relationship(
+        back_populates="portfolio", cascade="all, delete-orphan"
+    )
+
+
+class CashFlow(Base):
+    """Money added to (or withdrawn from) the wallet after creation."""
+    __tablename__ = "cash_flows"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"))
+    amount: Mapped[float] = mapped_column(Float)  # positive = deposit
+    flow_date: Mapped[date] = mapped_column(Date)
+
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="cash_flows")
 
 
 class Transaction(Base):

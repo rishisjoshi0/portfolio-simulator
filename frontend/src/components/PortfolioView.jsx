@@ -13,17 +13,17 @@ const money = (v) =>
 
 export default function PortfolioView({ portfolioId }) {
   const [summary, setSummary] = useState(null)
-  const [history, setHistory] = useState(null)
   const [analytics, setAnalytics] = useState(null)
   const [error, setError] = useState(null)
+  const [version, setVersion] = useState(0) // bumped after trades/deposits so the chart refetches
 
   const load = useCallback(async () => {
     setError(null)
     try {
       const s = await api.summary(portfolioId)
       setSummary(s)
-      const [h, a] = await Promise.all([api.history(portfolioId), api.analytics(portfolioId)])
-      setHistory(h)
+      setVersion((v) => v + 1)
+      const a = await api.analytics(portfolioId)
       setAnalytics(a)
     } catch (e) {
       setError(e.message)
@@ -38,8 +38,9 @@ export default function PortfolioView({ portfolioId }) {
 
   if (!summary) return <div className="loading">Loading portfolio…</div>
 
-  const gain = summary.total_value - summary.starting_cash
-  const gainPct = (gain / summary.starting_cash) * 100
+  const contributed = summary.contributed ?? summary.starting_cash
+  const gain = summary.total_value - contributed
+  const gainPct = (gain / contributed) * 100
 
   return (
     <>
@@ -60,7 +61,7 @@ export default function PortfolioView({ portfolioId }) {
         <TradeForm portfolioId={portfolioId} cash={summary.cash} onDone={load} />
       </div>
 
-      <PerformanceChart history={history} />
+      <PerformanceChart portfolioId={portfolioId} version={version} />
       <AnalyticsGrid analytics={analytics} />
       <HoldingsTable
         holdings={summary.holdings}

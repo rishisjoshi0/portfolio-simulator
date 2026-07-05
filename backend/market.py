@@ -102,5 +102,18 @@ def get_fundamentals(symbol: str) -> dict:
     return result
 
 
+def get_close_on(symbol: str, d: date) -> Optional[float]:
+    """Close price on date `d`, falling back to the most recent trading day
+    before it (handles weekends/holidays)."""
+    closes = get_daily_closes(symbol, d - pd.Timedelta(days=14).to_pytimedelta())
+    if closes is None:
+        return None
+    ts = pd.Timestamp(d)
+    eligible = closes[closes.index <= ts]
+    if eligible.empty:
+        return None
+    return float(eligible.iloc[-1])
+
+
 def validate_symbol(symbol: str) -> bool:
     return get_quote(symbol) is not None

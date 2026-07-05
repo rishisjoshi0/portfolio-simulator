@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
+import { api } from '../api.js'
 
 const SERIES = [
   { key: 'portfolio', label: 'Portfolio', color: '#2743e0', cls: 'lg-portfolio' },
@@ -9,9 +10,31 @@ const SERIES = [
   { key: 'nasdaq', label: 'Nasdaq', color: '#6d28d9', cls: 'lg-nasdaq' },
 ]
 
-export default function PerformanceChart({ history }) {
+const RANGES = [
+  { key: '1m', label: '1M' },
+  { key: '3m', label: '3M' },
+  { key: '6m', label: '6M' },
+  { key: '1y', label: '1Y' },
+  { key: '3y', label: '3Y' },
+  { key: '5y', label: '5Y' },
+  { key: 'max', label: 'Max' },
+]
+
+export default function PerformanceChart({ portfolioId, version }) {
   const [visible, setVisible] = useState({ portfolio: true, sp500: true, nasdaq: true })
-  const points = history?.points || []
+  const [range, setRange] = useState('max')
+  const [points, setPoints] = useState([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.history(portfolioId, range)
+      .then((h) => { if (!cancelled) setPoints(h.points || []) })
+      .catch(() => { if (!cancelled) setPoints([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [portfolioId, range, version])
 
   return (
     <div className="card">
@@ -30,9 +53,25 @@ export default function PerformanceChart({ history }) {
         </div>
       </div>
 
+      <div className="range-tabs" role="tablist" aria-label="Chart time range">
+        {RANGES.map((r) => (
+          <button
+            key={r.key}
+            role="tab"
+            aria-selected={range === r.key}
+            className={range === r.key ? 'on' : ''}
+            onClick={() => setRange(r.key)}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+
       {points.length < 2 ? (
         <div className="loading">
-          The chart appears once there are at least two trading days of history. Make a trade to get started.
+          {loading
+            ? 'Loading chart…'
+            : 'The chart appears once there are at least two trading days of history in this range.'}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
@@ -63,6 +102,7 @@ export default function PerformanceChart({ history }) {
                 stroke={s.color}
                 strokeWidth={s.key === 'portfolio' ? 2.4 : 1.6}
                 dot={false}
+                connectNulls
                 isAnimationActive={false}
               />
             ))}

@@ -31,6 +31,7 @@ def _holdings(portfolio: models.Portfolio) -> tuple[list[dict], float]:
     shares: dict[str, float] = {}
     cost: dict[str, float] = {}
     cash = float(portfolio.starting_cash)
+    cash += sum(f.amount for f in portfolio.cash_flows)
     for t in sorted(portfolio.transactions, key=lambda x: x.trade_date):
         if t.side == "BUY":
             shares[t.symbol] = shares.get(t.symbol, 0) + t.shares
@@ -111,23 +112,41 @@ def add_transaction(
     if quote is None:
         raise HTTPException(400, f"Could not find a price for '{symbol}'. Check the ticker.")
 
-    price = body.price or quote["price"]
+    trade_date = body.trade_date or date.today()
+    if trade_date > date.today():
+        raise HTTPException(400, "Trade date cannot be in the future.")
+
+    # Price priority: explicit price > historical close for backdated trades > live quote
+    if body.price:
+        price = body.price
+    elif trade_date < date.today():
+        price = market.get_close_on(symbol, trade_date)
+        if price is None:
+            raise HTTPException(400, f"No price data for {symbol} on {trade_date}. It may predate the stock's listing.")
+    else:
+        price = quote["price"]
+
+    # Fractional shares: derive from a dollar amount if given
+    shares = body.shares if body.shares is not None else round(body.amount / price, 6)
+    if shares <= 0:
+        raise HTTPException(400, "Trade is too small.")
+
     holdings, cash = _holdings(p)
 
-    if body.side == "BUY" and body.shares * price > cash + 1e-6:
-        raise HTTPException(400, f"Not enough cash: this buy costs ${body.shares * price:,.2f} but only ${cash:,.2f} is available.")
+    if body.side == "BUY" and shares * price > cash + 1e-6:
+        raise HTTPException(400, f"Not enough cash: this buy costs ${shares * price:,.2f} but only ${cash:,.2f} is available.")
     if body.side == "SELL":
         held = next((h["shares"] for h in holdings if h["symbol"] == symbol), 0.0)
-        if body.shares > held + 1e-9:
-            raise HTTPException(400, f"Cannot sell {body.shares} shares of {symbol}: only {held:g} held.")
+        if shares > held + 1e-9:
+            raise HTTPException(400, f"Cannot sell {shares:g} shares of {symbol}: only {held:g} held.")
 
     t = models.Transaction(
         portfolio_id=p.id,
         symbol=symbol,
         side=body.side,
-        shares=body.shares,
+        shares=shares,
         price=price,
-        trade_date=body.trade_date or date.today(),
+        trade_date=trade_date,
     )
     db.add(t)
     db.commit()
@@ -151,6 +170,20 @@ def list_transactions(portfolio_id: int, db: Session = Depends(get_db)):
     return sorted(p.transactions, key=lambda t: (t.trade_date, t.id), reverse=True)
 
 
+# ---------- Wallet deposits ----------
+
+@app.post("/api/portfolios/{portfolio_id}/deposits")
+def add_deposit(portfolio_id: int, body: schemas.DepositCreate, db: Session = Depends(get_db)):
+    p = _get_portfolio(db, portfolio_id)
+    flow_date = body.flow_date or date.today()
+    if flow_date > date.today():
+        raise HTTPException(400, "Deposit date cannot be in the future.")
+    f = models.CashFlow(portfolio_id=p.id, amount=body.amount, flow_date=flow_date)
+    db.add(f)
+    db.commit()
+    return {"ok": True, "amount": body.amount, "flow_date": flow_date.isoformat()}
+
+
 # ---------- Summary / history / analytics ----------
 
 @app.get("/api/portfolios/{portfolio_id}/summary")
@@ -158,10 +191,12 @@ def summary(portfolio_id: int, db: Session = Depends(get_db)):
     p = _get_portfolio(db, portfolio_id)
     holdings, cash = _holdings(p)
     invested = sum(h["market_value"] for h in holdings)
+    contributed = p.starting_cash + sum(f.amount for f in p.cash_flows)
     return {
         "id": p.id,
         "name": p.name,
         "starting_cash": p.starting_cash,
+        "contributed": contributed,
         "cash": cash,
         "invested": invested,
         "total_value": cash + invested,
@@ -169,28 +204,49 @@ def summary(portfolio_id: int, db: Session = Depends(get_db)):
     }
 
 
+RANGE_DAYS = {"1m": 30, "3m": 91, "6m": 182, "1y": 365, "3y": 365 * 3, "5y": 365 * 5}
+
+
 @app.get("/api/portfolios/{portfolio_id}/history")
-def history(portfolio_id: int, db: Session = Depends(get_db)):
+def history(portfolio_id: int, range: str = "max", db: Session = Depends(get_db)):
+    import pandas as pd
+
     p = _get_portfolio(db, portfolio_id)
     values = analytics.build_value_series(p, p.transactions)
     if values is None or len(values) == 0:
         return {"points": []}
 
-    rebased = analytics.rebase(values)
-    series = {"portfolio_value": values, "portfolio": rebased}
+    # Chart window: requested range back from today, capped at 'max' = portfolio start
+    if range in RANGE_DAYS:
+        window_start = pd.Timestamp(date.today()) - pd.Timedelta(days=RANGE_DAYS[range])
+    else:
+        window_start = values.index[0]
+
+    idx = pd.bdate_range(start=min(window_start, values.index[0]), end=date.today())
+    idx = idx[idx >= window_start] if range in RANGE_DAYS else idx
+
+    # Portfolio: slice to window, rebase at its first visible point
+    pv = values[values.index >= window_start] if range in RANGE_DAYS else values
+    series = {}
+    if len(pv) > 0:
+        series["portfolio_value"] = pv
+        series["portfolio"] = analytics.rebase(pv)
+
+    # Benchmarks: cover the whole window (even before the portfolio existed)
     for name, symbol in BENCHMARKS.items():
-        b = analytics.benchmark_series(symbol, values.index)
-        if b is not None:
+        b = analytics.benchmark_series(symbol, idx)
+        if b is not None and len(b) > 0:
             series[name] = analytics.rebase(b)
 
     points = []
-    for ts in values.index:
+    for ts in idx:
         point = {"date": ts.strftime("%Y-%m-%d")}
         for key, s in series.items():
             v = s.get(ts)
-            if v is not None:
+            if v is not None and not pd.isna(v):
                 point[key] = round(float(v), 2)
-        points.append(point)
+        if len(point) > 1:
+            points.append(point)
     return {"points": points}
 
 
