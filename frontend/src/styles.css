@@ -216,8 +216,18 @@ td { padding: 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
 td.num, th.num { text-align: right; font-family: var(--mono); }
 td .sym { font-weight: 600; }
 tr:last-child td { border-bottom: none; }
+td.actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
 .sell-link { background: none; border: none; color: var(--loss); font-size: 12px; padding: 0; }
 .sell-link:hover { text-decoration: underline; }
+.remove-link {
+  background: none;
+  border: none;
+  font-size: 13px;
+  padding: 0;
+  line-height: 1;
+  opacity: 0.6;
+}
+.remove-link:hover { opacity: 1; }
 
 /* ---------- Trade form ---------- */
 .trade-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }

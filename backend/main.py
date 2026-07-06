@@ -154,6 +154,30 @@ def add_transaction(
     return t
 
 
+@app.delete("/api/portfolios/{portfolio_id}/holdings/{symbol}")
+def remove_holding(portfolio_id: int, symbol: str, db: Session = Depends(get_db)):
+    """Unwind an entire position at its own average cost: shares go to zero
+    and cash is refunded exactly what was paid, booking no gain or loss."""
+    p = _get_portfolio(db, portfolio_id)
+    symbol = symbol.upper().strip()
+    holdings, _ = _holdings(p)
+    h = next((h for h in holdings if h["symbol"] == symbol), None)
+    if not h:
+        raise HTTPException(404, f"No {symbol} position to remove.")
+    avg_cost = h["cost_basis"] / h["shares"]
+    t = models.Transaction(
+        portfolio_id=p.id,
+        symbol=symbol,
+        side="SELL",
+        shares=h["shares"],
+        price=avg_cost,
+        trade_date=date.today(),
+    )
+    db.add(t)
+    db.commit()
+    return {"ok": True}
+
+
 @app.delete("/api/transactions/{transaction_id}")
 def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
     t = db.get(models.Transaction, transaction_id)

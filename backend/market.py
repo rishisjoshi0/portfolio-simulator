@@ -84,21 +84,35 @@ def get_daily_closes(symbol: str, start: date) -> Optional[pd.Series]:
 
 
 def get_fundamentals(symbol: str) -> dict:
-    """Trailing P/E, PEG, beta, and sector for a symbol (best effort)."""
+    """Trailing P/E, PEG, beta, and sector for a symbol (best effort).
+
+    Uses yfinance's `.info`, which hits Yahoo's quoteSummary endpoint. That
+    endpoint is far more likely to be rate-limited/blocked from cloud-hosting
+    IPs (Render, AWS, etc.) than the quote/history endpoints elsewhere in this
+    module, so failures here are common in production even when live quotes
+    work fine.
+    """
     symbol = symbol.upper()
-    cached = _get_cached(("fund", symbol), FUNDAMENTALS_TTL)
+    key = ("fund", symbol)
+    cached = _get_cached(key, FUNDAMENTALS_TTL)
     if cached is not None:
         return cached
-    result = {"pe": None, "peg": None, "beta": None, "sector": None}
     try:
         info = yf.Ticker(symbol).info or {}
-        result["pe"] = info.get("trailingPE")
-        result["peg"] = info.get("pegRatio") or info.get("trailingPegRatio")
-        result["beta"] = info.get("beta")
-        result["sector"] = info.get("sector")
-    except Exception:
-        pass
-    _set_cached(("fund", symbol), result)
+        result = {
+            "pe": info.get("trailingPE"),
+            "peg": info.get("pegRatio") or info.get("trailingPegRatio"),
+            "beta": info.get("beta"),
+            "sector": info.get("sector"),
+        }
+    except Exception as e:
+        print(f"[market] fundamentals fetch failed for {symbol}: {e!r}")
+        # Serve the last known-good value instead of blanking it out on what
+        # is often a transient block, rather than caching an empty result.
+        with _lock:
+            stale = _cache.get(key)
+        return stale[1] if stale is not None else {"pe": None, "peg": None, "beta": None, "sector": None}
+    _set_cached(key, result)
     return result
 
 

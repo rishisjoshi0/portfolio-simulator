@@ -26,4 +26,6 @@ export const api = {
   analytics: (id) => request(`/portfolios/${id}/analytics`),
   trade: (id, payload) =>
     request(`/portfolios/${id}/transactions`, { method: 'POST', body: JSON.stringify(payload) }),
+  removeHolding: (id, symbol) =>
+    request(`/portfolios/${id}/holdings/${symbol}`, { method: 'DELETE' }),
 }
